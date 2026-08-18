@@ -21,3 +21,5 @@ plans/
 data/
 implementation_plan.md
 FIX_SUMMARY.md
+/tests.backup_*/
+/*backup_*/
