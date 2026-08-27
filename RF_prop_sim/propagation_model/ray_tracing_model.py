@@ -10,7 +10,8 @@ def _free_space_fallback(frequency_ghz, tx_pos, rx_pos):
     if distance_m <= 0.0:
         return float("inf")
     distance_km = distance_m / 1000.0
-    return 32.44 + 20.0 * np.log10(frequency_ghz) + 20.0 * np.log10(distance_km)
+    # Formula takes MHz; caller supplies GHz
+    return 32.44 + 20.0 * np.log10(frequency_ghz * 1000.0) + 20.0 * np.log10(distance_km)
 
 
 def ray_tracing_path_loss(frequency_ghz, tx_pos, rx_pos, scene_name="munich"):
@@ -51,7 +52,11 @@ def ray_tracing_path_loss(frequency_ghz, tx_pos, rx_pos, scene_name="munich"):
         a, _ = paths.cir(normalize_delays=True, out_type="numpy")
         a_abs = np.abs(a)
         total_power = np.sum(a_abs**2)
-        if total_power == 0.0:
+        # Audit L-14: exact == 0.0 compare misses denormal tiny powers that
+        # then explode into absurd dB; treat anything below -200 dB equivalent
+        # as "no path".
+        if total_power <= 1e-20:
+            print("Warning: ray tracing found no usable path (power ~ 0).")
             return float("inf")
 
         return -10.0 * np.log10(total_power)

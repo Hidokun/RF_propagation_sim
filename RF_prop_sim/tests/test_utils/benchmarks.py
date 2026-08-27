@@ -1,7 +1,21 @@
 """Benchmarking utilities"""
 import time
+import pytest
 import numpy as np
 from functools import wraps
+
+
+def require_usable_sionna():
+    """Skip unless sionna imports AND its DrJit/LLVM backend initializes.
+
+    ``pytest.importorskip("sionna")`` is insufficient on machines where the
+    package installs but LLVM-C.dll is missing; importing sionna.rt surfaces
+    that failure, so we probe it directly.
+    """
+    try:
+        import sionna.rt  # noqa: F401 - triggers backend initialization
+    except Exception:
+        pytest.skip("sionna usable backend unavailable (missing LLVM-C.dll or GPU)")
 
 def benchmark_function(func):
     """Decorator to benchmark function execution time"""

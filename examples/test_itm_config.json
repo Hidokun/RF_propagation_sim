@@ -1,0 +1,19 @@
+{
+  "address": "San Francisco, CA",
+  "model": "itm",
+  "frequency_mhz": 900,
+  "distance_km": 0.5,
+  "tx_height_m": 30,
+  "rx_height_m": 1.5,
+  "area_radius_m": 500,
+  "tx_power_dbm": 40,
+  "antenna_gain_dbi": 12,
+  "center_lat": 33.58831,
+  "center_lng": -7.61138,
+  "terrain_type": "average",
+  "surface_refractivity": 300,
+  "effective_earth_radius_factor": 1.333,
+  "ground_permittivity": 15,
+  "ground_conductivity": 0.01,
+  "antenna_config_path": "examples/sample_antenna.json"
+}

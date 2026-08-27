@@ -1,10 +1,13 @@
 """Fog attenuation model debugger tests"""
 import pytest
 import numpy as np
-from propagation_model.models import fog_attenuation as fog_model
-from propagation_model.empirical_models import fog_attenuation as fog_empirical
+from propagation_model import fog_attenuation as fog_model
 from test_utils.validators import validate_fog_attenuation_output
-from test_utils.fixtures import SAMPLE_VALID_CONFIGS
+
+
+def fog_closed_form(frequency_ghz, distance_km, fog_density_gm3):
+    """Closed-form reference for the P.840-style model under test."""
+    return 0.2 * fog_density_gm3 * frequency_ghz ** 2 / (frequency_ghz ** 2 + 0.7) * distance_km
 
 class TestFogDebugger:
     """Test suite for Fog attenuation model debugger"""
@@ -15,18 +18,13 @@ class TestFogDebugger:
         frequency_ghz = 100.0
         distance_km = 2.0
         fog_density_gm3 = 0.5
-        
-        # Test both implementations
-        result_model = fog_model(frequency_ghz, distance_km, fog_density_gm3)
-        result_empirical = fog_empirical(frequency_ghz, distance_km, fog_density_gm3)
-        
-        # Validate outputs
-        assert validate_fog_attenuation_output(result_model, frequency_ghz, distance_km, fog_density_gm3)
-        assert validate_fog_attenuation_output(result_empirical, frequency_ghz, distance_km, fog_density_gm3)
-        
-        # Results should be reasonable
-        assert result_model >= 0
-        assert result_empirical >= 0
+
+        result = fog_model(frequency_ghz, distance_km, fog_density_gm3)
+
+        # Validate output and match the closed-form reference
+        assert validate_fog_attenuation_output(result, frequency_ghz, distance_km, fog_density_gm3)
+        assert result >= 0
+        assert abs(result - fog_closed_form(frequency_ghz, distance_km, fog_density_gm3)) < 1e-9
     
     @pytest.mark.propagation
     def test_fog_zero_inputs(self):
@@ -55,24 +53,37 @@ class TestFogDebugger:
     
     @pytest.mark.propagation
     def test_fog_frequency_scaling(self):
-        """Test that fog attenuation scales with frequency squared"""
+        """Test fog attenuation frequency dependence (ITU-R P.840-style).
+
+        The model gamma ∝ f²/(f²+0.7) exhibits two physical regimes:
+        - Rayleigh regime (f² << 0.7 GHz², f << ~0.84 GHz): grows ~ f²
+        - Saturation regime (f >> ~0.84 GHz): asymptotes to 0.2*M*d
+        """
         distance_km = 2.0
         fog_density_gm3 = 0.5
-        freq1_ghz = 10.0
-        freq2_ghz = 40.0  # 4x frequency
-        
-        loss1 = fog_model(freq1_ghz, distance_km, fog_density_gm3)
-        loss2 = fog_model(freq2_ghz, distance_km, fog_density_gm3)
-        
-        # Higher frequency should cause more attenuation (frequency squared dependence)
-        assert loss2 >= loss1
-        
-        # Should be roughly proportional to frequency squared
-        expected_ratio = (freq2_ghz / freq1_ghz) ** 2
-        actual_ratio = loss2 / loss1 if loss1 > 0 else float('inf')
-        
-        # Allow tolerance for the simplified model
-        assert abs(actual_ratio - expected_ratio) < expected_ratio * 0.5
+
+        # Monotonic increase across the whole band (0.01 GHz .. 1000 GHz)
+        freqs = np.logspace(-2, 3, 50)
+        losses = [fog_model(f, distance_km, fog_density_gm3) for f in freqs]
+        assert all(b >= a for a, b in zip(losses, losses[1:]))
+
+        # Rayleigh regime: 2x frequency -> ratio close to 4 (with the
+        # known denominator correction factor from the closed form)
+        f1, f2 = 0.05, 0.10
+        loss1 = fog_model(f1, distance_km, fog_density_gm3)
+        loss2 = fog_model(f2, distance_km, fog_density_gm3)
+        actual_ratio = loss2 / loss1
+        expected_ratio = fog_closed_form(f2, distance_km, fog_density_gm3) / \
+            fog_closed_form(f1, distance_km, fog_density_gm3)
+        assert abs(actual_ratio - expected_ratio) < 1e-9
+        assert 3.5 < actual_ratio < 4.0  # near-quadratic growth
+
+        # Saturation regime: 10 -> 40 GHz stays nearly flat (ratio < 1.1),
+        # NOT quadratic — this is correct P.840 behavior above ~10 GHz.
+        loss_hi1 = fog_model(10.0, distance_km, fog_density_gm3)
+        loss_hi2 = fog_model(40.0, distance_km, fog_density_gm3)
+        saturation_ratio = loss_hi2 / loss_hi1
+        assert 1.0 <= saturation_ratio < 1.1
     
     @pytest.mark.propagation
     def test_fog_distance_scaling(self):
@@ -109,27 +120,19 @@ class TestFogDebugger:
         assert abs(actual_ratio - expected_ratio) < 0.01  # Should be very close to linear
     
     @pytest.mark.propagation
-    def test_fog_against_empirical_model(self):
-        """Cross-validate fog attenuation implementation against empirical model"""
+    def test_fog_against_closed_form(self):
+        """Validate implementation against the closed-form expression"""
         test_cases = [
             (10.0, 0.5, 0.1),    # Low frequency, short distance, low density
             (100.0, 2.0, 0.5),   # Medium frequency, medium distance, medium density
             (200.0, 5.0, 2.0),   # High frequency, long distance, high density
         ]
-        
+
         for frequency_ghz, distance_km, fog_density_gm3 in test_cases:
-            result_model = fog_model(frequency_ghz, distance_km, fog_density_gm3)
-            result_empirical = fog_empirical(frequency_ghz, distance_km, fog_density_gm3)
-            
-            # Should pass validation
-            assert validate_fog_attenuation_output(result_model, frequency_ghz, distance_km, fog_density_gm3)
-            assert validate_fog_attenuation_output(result_empirical, frequency_ghz, distance_km, fog_density_gm3)
-            
-            # Both should be reasonable values
-            assert result_model >= 0
-            assert result_empirical >= 0
-            
-            # For the simplified models, they should be reasonably close
-            if result_model > 0 and result_empirical > 0:
-                ratio = result_model / result_empirical
-                assert 0.5 <= ratio <= 2.0  # Within factor of 2
+            result = fog_model(frequency_ghz, distance_km, fog_density_gm3)
+
+            assert validate_fog_attenuation_output(result, frequency_ghz, distance_km, fog_density_gm3)
+            assert result >= 0
+
+            expected = fog_closed_form(frequency_ghz, distance_km, fog_density_gm3)
+            assert abs(result - expected) < 1e-9

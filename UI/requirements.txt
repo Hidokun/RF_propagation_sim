@@ -1,0 +1,8 @@
+# Streamlit UI Dependencies
+# Contains all dependencies needed for the RF Simulator Streamlit UI
+
+streamlit>=1.28.0
+streamlit-folium>=0.18.0
+folium>=0.15.0
+numpy>=1.24.0
+scipy>=1.11.0

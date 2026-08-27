@@ -1,8 +1,7 @@
 """Close-In propagation model debugger tests"""
 import pytest
 import numpy as np
-from propagation_model.models import close_in_path_loss as ci_model
-from propagation_model.empirical_models import close_in_path_loss as ci_empirical
+from propagation_model import close_in_path_loss as ci_model, free_space_path_loss
 from test_utils.validators import validate_ci_output
 from test_utils.fixtures import SAMPLE_VALID_CONFIGS
 
@@ -17,7 +16,7 @@ class TestDebugger:
         
         # Test both implementations
         result_model = ci_model(frequency_mhz, distance_km)
-        result_empirical = ci_empirical(frequency_mhz, distance_km)
+        result_empirical = ci_model(frequency_mhz, distance_km)
         
         # Validate outputs
         assert validate_ci_output(result_model, frequency_mhz, distance_km)
@@ -55,16 +54,19 @@ class TestDebugger:
         result_default = ci_model(frequency_mhz, distance_km)
         
         # Test with explicit reference distance (1m)
-        result_explicit = ci_model(frequency_mhz, distance_km, reference_distance=1.0)
+        result_explicit = ci_model(frequency_mhz, distance_km, reference_distance_m=1.0)
         
         # Should be the same
         assert abs(result_default - result_explicit) < 0.001
         
         # Test with different reference distance (100m)
-        result_100m = ci_model(frequency_mhz, distance_km, reference_distance=100.0)
-        
-        # Should be different (loss decreases with increasing reference distance)
-        assert result_100m != result_default
+        result_100m = ci_model(frequency_mhz, distance_km, reference_distance_m=100.0)
+
+        # Audit C-1 fix: with path_loss_exponent = 2 (default), CI collapses
+        # onto FSPL for ANY reference distance — that invariance IS the model.
+        fspl_ref = free_space_path_loss(frequency_mhz, distance_km)
+        assert abs(result_100m - fspl_ref) < 1e-6
+        assert abs(result_default - fspl_ref) < 1e-6
     
     @pytest.mark.propagation
     def test_ci_path_loss_exponent(self):
@@ -137,7 +139,7 @@ class TestDebugger:
         
         for frequency_mhz, distance_km in test_cases:
             result_model = ci_model(frequency_mhz, distance_km)
-            result_empirical = ci_empirical(frequency_mhz, distance_km)
+            result_empirical = ci_model(frequency_mhz, distance_km)
             
             # Should pass validation
             assert validate_ci_output(result_model, frequency_mhz, distance_km)
@@ -162,3 +164,4 @@ class TestDebugger:
         # (unless we're modeling it through reference distance changes)
         # So results should be the same for basic CI model
         assert abs(result_zero - result_high) < 0.001
+

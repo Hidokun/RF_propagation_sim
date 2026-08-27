@@ -1,0 +1,14 @@
+numpy
+scipy
+itmlogic
+sionna-rt
+googlemaps
+osmnx
+folium
+geopandas
+shapely
+pyvista
+rioxarray
+pymap3d
+rasterio
+python-dotenv

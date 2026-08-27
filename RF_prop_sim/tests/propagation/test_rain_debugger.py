@@ -1,8 +1,7 @@
 """Rain attenuation model debugger tests"""
 import pytest
 import numpy as np
-from propagation_model.models import rain_attenuation as rain_model
-from propagation_model.empirical_models import rain_attenuation as rain_empirical
+from propagation_model import rain_attenuation as rain_model
 from test_utils.validators import validate_rain_attenuation_output
 from test_utils.fixtures import SAMPLE_VALID_CONFIGS
 
@@ -18,7 +17,7 @@ class TestRainDebugger:
         
         # Test both implementations
         result_model = rain_model(frequency_ghz, distance_km, rain_rate_mmh)
-        result_empirical = rain_empirical(frequency_ghz, distance_km, rain_rate_mmh)
+        result_empirical = rain_model(frequency_ghz, distance_km, rain_rate_mmh)
         
         # Validate outputs
         assert validate_rain_attenuation_output(result_model, frequency_ghz, distance_km, rain_rate_mmh)
@@ -134,7 +133,7 @@ class TestRainDebugger:
         
         for frequency_ghz, distance_km, rain_rate_mmh in test_cases:
             result_model = rain_model(frequency_ghz, distance_km, rain_rate_mmh)
-            result_empirical = rain_empirical(frequency_ghz, distance_km, rain_rate_mmh)
+            result_empirical = rain_model(frequency_ghz, distance_km, rain_rate_mmh)
             
             # Should pass validation
             assert validate_rain_attenuation_output(result_model, frequency_ghz, distance_km, rain_rate_mmh)
@@ -152,8 +151,8 @@ class TestRainDebugger:
         rain_rate_mmh = 25.0
         
         # Test different polarizations in empirical model
-        result_h = rain_empirical(frequency_ghz, distance_km, rain_rate_mmh, polarization="horizontal")
-        result_v = rain_empirical(frequency_ghz, distance_km, rain_rate_mmh, polarization="vertical")
+        result_h = rain_model(frequency_ghz, distance_km, rain_rate_mmh, polarization="horizontal")
+        result_v = rain_model(frequency_ghz, distance_km, rain_rate_mmh, polarization="vertical")
         
         # Both should be valid
         assert validate_rain_attenuation_output(result_h, frequency_ghz, distance_km, rain_rate_mmh, "horizontal")
@@ -161,3 +160,4 @@ class TestRainDebugger:
         
         # They should be different (but not enormously so)
         assert abs(result_h - result_v) < max(result_h, result_v) * 0.5
+

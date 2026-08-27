@@ -19,10 +19,11 @@ def test_model(model_name):
     # Override the model
     cfg.model = model_name
     
-    # Save to temporary file
+    # Write via a with-block so the handle is CLOSED and flushed before the
+    # file is re-opened by name — on Windows an open handle raises
+    # PermissionError in the reader (audit M-11).
     import tempfile
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        # Convert to dict, modify model, then save
         cfg_dict = {
             "address": cfg.address,
             "model": cfg.model,
@@ -39,7 +40,7 @@ def test_model(model_name):
         }
         json.dump(cfg_dict, f)
         temp_cfg_path = f.name
-    
+
     try:
         cfg = load_config_from_file(temp_cfg_path)
         antenna_cfg = parse_antenna_config(cfg.antenna_config_path)

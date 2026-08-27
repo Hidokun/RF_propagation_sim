@@ -4,16 +4,20 @@ import numpy as np
 import gc
 import os
 import sys
-from propagation_model.models import (
+from propagation_model import (
     free_space_path_loss,
     rain_attenuation,
     gas_attenuation,
     fog_attenuation,
-    close_in_path_loss
+    close_in_path_loss,
 )
 from propagation_model.itm_model import itm_path_loss as itm_model
 from propagation_model.ray_tracing_model import ray_tracing_path_loss as ray_tracing_model
-from test_utils.benchmarks import BenchmarkTimer, assert_performance_threshold
+from test_utils.benchmarks import (
+    BenchmarkTimer,
+    assert_performance_threshold,
+    require_usable_sionna,
+)
 
 class TestMemoryProfilingDebugger:
     """Test suite for memory profiling performance debugger"""
@@ -162,31 +166,30 @@ class TestMemoryProfilingDebugger:
     @pytest.mark.requires_sionna
     def test_ray_tracing_model_memory_usage(self):
         """Test memory usage characteristics of ray tracing model"""
-        # Skip if sionna not available
-        pytest.importorskip("sionna")
-        
+        require_usable_sionna()
+
         gc.collect()
         initial_objects = len(gc.get_objects())
-        
+
         # Ray tracing model likely uses significant memory for scene data, etc.
         # But we still want to ensure it doesn't leak memory uncontrollably
         for i in range(100):  # Fewer iterations as ray tracing is memory intensive
-            result = ray_tracing_model(30e9, [0, 0, 10], [100, 0, 1.5])
+            result = ray_tracing_model(30.0, [0, 0, 10], [100, 0, 1.5])
             # Result might be None if there are issues, but shouldn't crash
-        
+
         gc.collect()
         after_rt = len(gc.get_objects())
         rt_growth = after_rt - initial_objects
-        
+
         # Ray tracing might use more memory, but growth should be controlled
         assert rt_growth < 5000, f"Ray tracing model excessive memory growth: {rt_growth} objects"
-        
+
         # Test repeated calls with same parameters
         gc.collect()
         initial_objects_same = len(gc.get_objects())
-        
+
         for _ in range(100):  # Even fewer for repeated tests
-            result = ray_tracing_model(30e9, [0, 0, 10], [100, 0, 1.5])
+            result = ray_tracing_model(30.0, [0, 0, 10], [100, 0, 1.5])
         
         gc.collect()
         after_rt_same = len(gc.get_objects())

@@ -22,7 +22,11 @@ def download_sample_dem(output_path="sample_dem.tif"):
     
     print(f"Downloading sample DEM from {url}...")
     try:
-        urllib.request.urlretrieve(url, output_path)
+        # Audit L-11: urlretrieve has no timeout and can hang forever.
+        import shutil
+        with urllib.request.urlopen(url, timeout=60) as resp, \
+                open(output_path, "wb") as out_f:
+            shutil.copyfileobj(resp, out_f)
         print(f"Sample DEM downloaded to {output_path}")
         return output_path
     except Exception as e:

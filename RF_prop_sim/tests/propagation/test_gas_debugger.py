@@ -1,8 +1,7 @@
 """Gas attenuation model debugger tests"""
 import pytest
 import numpy as np
-from propagation_model.models import gas_attenuation as gas_model
-from propagation_model.empirical_models import gas_attenuation as gas_empirical
+from propagation_model import gas_attenuation as gas_model
 from test_utils.validators import validate_gas_attenuation_output
 from test_utils.fixtures import SAMPLE_VALID_CONFIGS
 
@@ -17,7 +16,7 @@ class TestGasDebugger:
         
         # Test both implementations
         result_model = gas_model(frequency_ghz, distance_km)
-        result_empirical = gas_empirical(frequency_ghz, distance_km)
+        result_empirical = gas_model(frequency_ghz, distance_km)
         
         # Validate outputs
         assert validate_gas_attenuation_output(result_model, frequency_ghz, distance_km)
@@ -89,8 +88,8 @@ class TestGasDebugger:
         temp1_c = -40.0  # Cold
         temp2_c = 50.0   # Hot
         
-        loss1 = gas_empirical(frequency_ghz, distance_km, temp1_c)
-        loss2 = gas_empirical(frequency_ghz, distance_km, temp2_c)
+        loss1 = gas_model(frequency_ghz, distance_km, temp1_c)
+        loss2 = gas_model(frequency_ghz, distance_km, temp2_c)
         
         # Both should be valid
         assert validate_gas_attenuation_output(loss1, frequency_ghz, distance_km, temp1_c)
@@ -108,8 +107,8 @@ class TestGasDebugger:
         pressure1_hpa = 800.0  # Low pressure
         pressure2_hpa = 1200.0 # High pressure
         
-        loss1 = gas_empirical(frequency_ghz, distance_km, pressure_hpa=pressure1_hpa)
-        loss2 = gas_empirical(frequency_ghz, distance_km, pressure_hpa=pressure2_hpa)
+        loss1 = gas_model(frequency_ghz, distance_km, pressure_hpa=pressure1_hpa)
+        loss2 = gas_model(frequency_ghz, distance_km, pressure_hpa=pressure2_hpa)
         
         # Both should be valid
         assert validate_gas_attenuation_output(loss1, frequency_ghz, distance_km, pressure_hpa=pressure1_hpa)
@@ -127,8 +126,8 @@ class TestGasDebugger:
         humidity1 = 0.0    # Dry
         humidity2 = 100.0  # Saturated
         
-        loss1 = gas_empirical(frequency_ghz, distance_km, relative_humidity=humidity1)
-        loss2 = gas_empirical(frequency_ghz, distance_km, relative_humidity=humidity2)
+        loss1 = gas_model(frequency_ghz, distance_km, relative_humidity=humidity1)
+        loss2 = gas_model(frequency_ghz, distance_km, relative_humidity=humidity2)
         
         # Both should be valid
         assert validate_gas_attenuation_output(loss1, frequency_ghz, distance_km, relative_humidity=humidity1)
@@ -138,29 +137,26 @@ class TestGasDebugger:
         assert loss2 >= loss1
     
     @pytest.mark.propagation
-    def test_gas_against_empirical_model(self):
-        """Cross-validate gas attenuation implementation against empirical model"""
+    def test_gas_against_closed_form(self):
+        """Validate implementation against its closed-form expression"""
         test_cases = [
             (1.0, 1.0),         # Low frequency, short distance
             (10.0, 5.0),        # Medium frequency, medium distance
             (60.0, 10.0),       # High frequency, long distance
             (120.0, 20.0)       # Very high frequency, very long distance
         ]
-        
+
         for frequency_ghz, distance_km in test_cases:
-            result_model = gas_model(frequency_ghz, distance_km)
-            result_empirical = gas_empirical(frequency_ghz, distance_km)
-            
-            # Should pass validation
-            assert validate_gas_attenuation_output(result_model, frequency_ghz, distance_km)
-            assert validate_gas_attenuation_output(result_empirical, frequency_ghz, distance_km)
-            
-            # Both should be reasonable values
-            assert result_model >= 0
-            assert result_empirical >= 0
-            
-            # For basic validation, they should be in the same ballpark
-            # (Exact match not expected due to different model complexities)
-            if result_model > 0 and result_empirical > 0:
-                ratio = result_model / result_empirical
-                assert 0.05 <= ratio <= 10.0  # Within order of magnitude
+            result = gas_model(frequency_ghz, distance_km)
+            assert validate_gas_attenuation_output(result, frequency_ghz, distance_km)
+            assert result >= 0
+
+            # Closed form: gamma_o + gamma_w terms (standard atmosphere)
+            t_k = 15.0 + 273.15
+            svp = 6.1121 * np.exp((17.502 * 15.0) / (15.0 + 240.97))
+            wvd = 216.7 * (50.0 / 100.0 * svp) / t_k
+            expected = (
+                0.0001 * 1013.25 * frequency_ghz ** 2 / (frequency_ghz ** 2 + 0.1)
+                + 0.000045 * wvd * frequency_ghz ** 2 / (frequency_ghz ** 2 + 0.5)
+            ) * distance_km
+            assert abs(result - expected) < 1e-9

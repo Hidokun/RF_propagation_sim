@@ -1,25 +1,25 @@
-.env
-output/
+# Python
 __pycache__/
-.kilo/
-*.pyc
-*.pyo
-.pytest_cache/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
 .venv/
-*.log
-.DS_Store
-google_key.json
-*.pdf
-*.json
-*.js
-*.txt
-sample_ref_code_geocoding.py
-debug_itm.py
-.vscode/
+venv/
+
+# Generated simulation artifacts
+RF_prop_sim/Output/
+RF_prop_sim/coverage_map.html
+
+# Streamlit caches
 cache/
-plans/
-data/
-implementation_plan.md
-FIX_SUMMARY.md
-/tests.backup_*/
-/*backup_*/
+UI/cache/
+
+# Secrets & local config
+.env
+google_key.json
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db

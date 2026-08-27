@@ -1,1 +1,0 @@
-'''mathematical modelization of the physical phenomena taking place'''

@@ -2,16 +2,20 @@
 import pytest
 import time
 import numpy as np
-from propagation_model.models import (
+from propagation_model import (
     free_space_path_loss,
     rain_attenuation,
     gas_attenuation,
     fog_attenuation,
-    close_in_path_loss
+    close_in_path_loss,
 )
 from propagation_model.itm_model import itm_path_loss as itm_model
 from propagation_model.ray_tracing_model import ray_tracing_path_loss as ray_tracing_model
-from test_utils.benchmarks import BenchmarkTimer, assert_performance_threshold
+from test_utils.benchmarks import (
+    BenchmarkTimer,
+    assert_performance_threshold,
+    require_usable_sionna,
+)
 
 class TestMacroBenchmarksDebugger:
     """Test suite for macro-benchmark performance debugger"""
@@ -152,59 +156,38 @@ class TestMacroBenchmarksDebugger:
     @pytest.mark.requires_sionna
     def test_ray_tracing_end_to_end_simulation(self):
         """Benchmark end-to-end simulation with ray tracing model"""
-        # Skip if sionna not available
-        pytest.importorskip("sionna")
-        
+        require_usable_sionna()
+
         timer = BenchmarkTimer()
-        
-        # Warm up
-        for _ in range(3):  # Even fewer warm-ups for ray tracing
-            freq_hz = 30e9
+
+        def one_iteration(i, freq_hz):
             tx_array = [0, 0, 10]
-            rx_array = [100, 0, 1.5]
-            
+            rx_array = [50 + (i % 50), 0, 1.5]
+
             # Basic models
-            # Note: Ray tracing works with different units, so we approximate
-            distance_m = np.sqrt(sum((rx_array[i] - tx_array[i])**2 for i in range(3)))
-            distance_km = distance_m / 1000.0
+            distance_m = np.sqrt(sum((rx_array[k] - tx_array[k])**2 for k in range(3)))
+            distance_km = max(0.001, distance_m / 1000.0)
             freq_mhz = freq_hz / 1e6
-            
-            fspl = free_space_path_loss(freq_mhz, distance_km)
+
+            free_space_path_loss(freq_mhz, distance_km)
             freq_ghz = freq_mhz / 1000.0
-            rain = rain_attenuation(freq_ghz, distance_km, 5.0)
-            gas = gas_attenuation(freq_ghz, distance_km)
-            fog = fog_attenuation(freq_ghz, distance_km, 0.1)
-            
-            # Ray tracing model
-            rt_result = ray_tracing_model(freq_hz, tx_array, rx_array)
-        
+            rain_attenuation(freq_ghz, distance_km, 5.0)
+            gas_attenuation(freq_ghz, distance_km)
+            fog_attenuation(freq_ghz, distance_km, 0.1)
+
+            # Ray tracing model (frequency in GHz)
+            return ray_tracing_model(freq_hz / 1e9, tx_array, rx_array)
+
+        # Warm up
+        for i in range(3):
+            one_iteration(i, 30e9)
+
         # Actual benchmark
         timer.start()
         iterations = 50  # Much fewer iterations as ray tracing is very complex
-        for _ in range(iterations):
-            # Vary parameters slightly
-            freq_hz = 20e9 + (_ % 20) * 1e9  # 20-40 GHz
-            tx_array = [0, 0, 10 + (_ % 10)]  # Vary tx height
-            rx_array = [50 + (_ % 50), 0, 1.5 + (_ % 10) / 10.0]  # Vary rx position
-            
-            # Basic models (approximate)
-            distance_m = np.sqrt(sum((rx_array[i] - tx_array[i])**2 for i in range(3)))
-            distance_km = max(0.001, distance_m / 1000.0)  # Avoid zero distance
-            freq_mhz = freq_hz / 1e6
-            
-            fspl = free_space_path_loss(freq_mhz, distance_km)
-            freq_ghz = freq_mhz / 1000.0
-            rain_rate = 5.0 + (_ % 15)  # Vary rain rate
-            rain = rain_attenuation(freq_ghz, distance_km, rain_rate)
-            gas = gas_attenuation(freq_ghz, distance_km)
-            fog_density = 0.1 + (_ % 10) / 50.0  # Vary fog density
-            fog = fog_attenuation(freq_ghz, distance_km, fog_density)
-            
-            # Ray tracing model
-            rt_result = ray_tracing_model(freq_hz, tx_array, rx_array)
-            
-            # For simplicity in this benchmark, we'll mainly check that it completes
-            # In a real system, you'd combine the results appropriately
+        for i in range(iterations):
+            freq_hz = 20e9 + (i % 20) * 1e9  # 20-40 GHz
+            one_iteration(i, freq_hz)
         timer.stop()
         
         # Calculate average time per simulation
@@ -215,32 +198,38 @@ class TestMacroBenchmarksDebugger:
     
     @pytest.mark.performance
     def test_scaling_analysis(self):
-        """Analyze how performance scales with input parameters"""
+        """Analyze how performance scales with input parameters.
+
+        FSPL cost must not depend on input values; best-of-3 sampling per
+        regime keeps the comparison stable under suite-time system load.
+        """
         timer = BenchmarkTimer()
-        
-        # Test how FSPL performance scales with different parameter ranges
+
         test_configs = [
             {"name": "Low freq, short dist", "freq": 100.0, "dist": 0.1},
             {"name": "Low freq, long dist", "freq": 100.0, "dist": 100.0},
             {"name": "High freq, short dist", "freq": 10000.0, "dist": 0.1},
             {"name": "High freq, long dist", "freq": 10000.0, "dist": 100.0},
         ]
-        
+
         times = []
         for config in test_configs:
-            timer.start()
-            for _ in range(1000):
-                free_space_path_loss(config["freq"], config["dist"])
-            timer.stop()
-            times.append((config["name"], timer.elapsed()))
-        
+            free_space_path_loss(config["freq"], config["dist"])  # warm-up
+            best = np.inf
+            for _ in range(3):
+                timer.start()
+                for _ in range(10000):
+                    free_space_path_loss(config["freq"], config["dist"])
+                timer.stop()
+                best = min(best, timer.elapsed())
+            times.append((config["name"], best))
+
         # All configurations should have similar performance
         # (FSPL calculation time should not depend significantly on input values)
         elapsed_times = [t[1] for t in times]
         max_time = max(elapsed_times)
         min_time = min(elapsed_times)
-        
-        # Ratio of slowest to fastest should be reasonable
+
         if min_time > 0:
             ratio = max_time / min_time
             assert ratio < 5.0, f"Performance scaling too uneven: {ratio:.2f}x difference"

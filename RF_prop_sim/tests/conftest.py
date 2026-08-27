@@ -3,8 +3,14 @@ import pytest
 import sys
 import os
 
-# Add the project root to the Python path so we can import RF_prop_sim modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Add paths so we can import both flat modules (propagation_model) and
+# package-style imports (RF_prop_sim.*) used across tests and the UI.
+tests_dir = os.path.dirname(os.path.abspath(__file__))
+package_dir = os.path.join(tests_dir, '..')
+project_root = os.path.join(package_dir, '..')
+for p in (project_root, package_dir):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 # Custom pytest configuration
 def pytest_configure(config):

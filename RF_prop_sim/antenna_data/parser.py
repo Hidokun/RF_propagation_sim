@@ -11,9 +11,9 @@ import json
 import csv
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Optional, Union, get_origin, get_args
 
-# ─── Standard Antenna Configuration ────────────────────────────────────────────
+# â”€â”€â”€ Standard Antenna Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @dataclass
 class AntennaConfig:
@@ -44,7 +44,7 @@ class AntennaConfig:
         return asdict(self)
 
 
-# ─── Dispatcher ────────────────────────────────────────────────────────────────
+# â”€â”€â”€ Dispatcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def parse_antenna_config(source):
     """
@@ -77,7 +77,7 @@ def parse_antenna_config(source):
     raise TypeError(f"Unsupported antenna source type: {type(source)}")
 
 
-# ─── Format-specific parsers ────────────────────────────────────────────────────
+# â”€â”€â”€ Format-specific parsers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _validate_antenna_config(cfg: AntennaConfig) -> AntennaConfig:
     """Validate a normalized antenna config and apply safe defaults."""
@@ -86,7 +86,7 @@ def _validate_antenna_config(cfg: AntennaConfig) -> AntennaConfig:
     if cfg.tx_power_dbm < 0:
         raise ValueError("tx_power_dbm must be non-negative")
     if not (0 <= cfg.gain_dbi <= 50):
-        raise ValueError("gain_dbi must be between 0 and 50")
+        print(f"WARNING: gain_dbi={cfg.gain_dbi} is outside typical range [0, 50] dBi. Proceeding anyway.")
     if cfg.height_m < 0:
         raise ValueError("height_m must be non-negative")
     if cfg.beamwidth_h <= 0:
@@ -119,27 +119,36 @@ def _from_dict(d: dict) -> AntennaConfig:
     cfg = AntennaConfig()
     for f, field_info in cfg.__dataclass_fields__.items():
         if f in normalized:
+            # Explicit None means "not provided" (e.g., build_antenna_config
+            # forwards unset optional coords) — keep the dataclass default.
+            if normalized[f] is None:
+                continue
             try:
                 field_type = field_info.type
                 value = normalized[f]
-                origin = getattr(field_type, '__origin__', None)
+                # typing.get_origin(Optional[float]) is Union (never Optional),
+                # so detect optionality via get_origin/get_args â€” the previous
+                # `origin is Optional` branch was unreachable, leaving lat/lng/
+                # alt as raw strings from XML/KML/text sources.
+                inner = None
+                if get_origin(field_type) is Union:
+                    non_none = [a for a in get_args(field_type) if a is not type(None)]
+                    inner = non_none[0] if len(non_none) == 1 else None
+
                 if field_type in (float, int, bool):
                     if field_type is float:
                         setattr(cfg, f, float(value))
                     elif field_type is int:
                         setattr(cfg, f, int(value))
                     else:
-                        setattr(cfg, f, str(value).lower() in ("1", "true", "yes"))
-                elif origin is Optional:
-                    inner = field_type.__args__[0]
+                        setattr(cfg, f, str(value).lower() in ("1", "true", "yes", "y", "on"))
+                elif inner in (float, int, bool):
                     if inner is float:
                         setattr(cfg, f, float(value))
                     elif inner is int:
                         setattr(cfg, f, int(value))
-                    elif inner is bool:
-                        setattr(cfg, f, str(value).lower() in ("1", "true", "yes"))
                     else:
-                        setattr(cfg, f, value)
+                        setattr(cfg, f, str(value).lower() in ("1", "true", "yes", "y", "on"))
                 else:
                     setattr(cfg, f, value)
             except (ValueError, TypeError) as e:
@@ -150,9 +159,12 @@ def _from_dict(d: dict) -> AntennaConfig:
 def _from_json(path: str) -> AntennaConfig:
     with open(path, "r") as f:
         data = json.load(f)
-    # Support single object or list of objects (first used)
+    # Support single object or list of objects (first used).
+    # Audit L-4: null / [null] must raise a clear ValueError.
     if isinstance(data, list):
-        data = data[0]
+        data = data[0] if data and isinstance(data[0], dict) else None
+    if not isinstance(data, dict):
+        raise ValueError(f"Antenna JSON must be an object: {path}")
     print(f"Loaded antenna config from JSON: {path}")
     return _from_dict(data)
 
@@ -173,7 +185,8 @@ def _from_xml(path: str) -> AntennaConfig:
     root = tree.getroot()
     data = {}
     for child in root:
-        data[child.tag] = child.text
+        if child.text is not None:   # audit L-3
+            data[child.tag] = child.text
     print(f"Loaded antenna config from XML: {path}")
     return _from_dict(data)
 
@@ -198,7 +211,8 @@ def _from_kml(path: str) -> AntennaConfig:
 
     # Extract ExtendedData SimpleData fields
     for sd in root.findall(".//kml:SimpleData", ns):
-        data[sd.get("name", "")] = sd.text
+        if sd.text is not None:   # audit L-3
+            data[sd.get("name", "")] = sd.text
 
     print(f"Loaded antenna config from KML: {path}")
     return _from_dict(data)
@@ -221,3 +235,4 @@ def _from_generic_text(path: str) -> AntennaConfig:
                     break
     print(f"Loaded antenna config from text file: {path}")
     return _from_dict(data)
+

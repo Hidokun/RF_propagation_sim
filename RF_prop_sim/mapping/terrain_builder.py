@@ -37,9 +37,39 @@ def download_buildings(lat, lng, dist=500):
 from .dem_provider import DemProvider
 import config
 
+# Basenames treated as synthetic fallbacks rather than real terrain data
+_SYNTHETIC_DEM_PREFIXES = ("sample_dem",)
+
+
+def resolve_dem_path(prefer_real=True):
+    """
+    Resolve a usable DEM .tif path using the documented preference order:
+      1. Any real tile in data/dem (excluding synthetic fallbacks)
+      2. The bundled synthetic sample_dem.tif
+      3. None if nothing exists (caller decides whether to generate)
+
+    Returns an absolute path string or None.
+    """
+    dem_dir = config.get_dem_path()
+    import glob
+    all_tifs = sorted(glob.glob(os.path.join(dem_dir, "*.tif")))
+    if not all_tifs:
+        return None
+    real_tifs = [t for t in all_tifs
+                 if not os.path.basename(t).startswith(_SYNTHETIC_DEM_PREFIXES)]
+    if prefer_real and real_tifs:
+        return real_tifs[0]
+    return all_tifs[0]
+
+
 def get_elevation(lat, lng, dem_path=None):
     """
     Return elevation for a given latitude and longitude using a local DEM file.
+
+    Preference order:
+      1. Explicitly provided dem_path
+      2. Any real DEM tile in data/dem (excluding synthetic fallbacks)
+      3. The bundled synthetic sample (loudly announced)
 
     :param lat: Latitude in decimal degrees
     :param lng: Longitude in decimal degrees
@@ -47,17 +77,19 @@ def get_elevation(lat, lng, dem_path=None):
     :return: Elevation in meters
     """
     if dem_path is None:
-        dem_dir = config.get_dem_path()
-        # Find a .tif file in the directory
-        import glob
-        tif_files = glob.glob(os.path.join(dem_dir, "*.tif"))
-        if tif_files:
-            dem_path = tif_files[0]
-        else:
+        resolved = resolve_dem_path()
+        if resolved is None:
             print("WARNING: No DEM file found in data/dem. Downloading sample DEM...")
             from .dem_processor import download_sample_dem
+            dem_dir = config.get_dem_path()
             dem_path = os.path.join(dem_dir, "sample_dem.tif")
             download_sample_dem(dem_path)
+            print("WARNING: Synthetic DEM generated. Elevations are NOT real terrain.")
+        else:
+            dem_path = resolved
+            if os.path.basename(dem_path).startswith(_SYNTHETIC_DEM_PREFIXES):
+                print("WARNING: Using SYNTHETIC sample_dem.tif (elevations are fake). "
+                      "Run scripts/fetch_srtm_dem.py to obtain real terrain data.")
             
     if not dem_path or not os.path.exists(dem_path):
         print("WARNING: No valid DEM path resolved. Returning 0.0 elevation.")

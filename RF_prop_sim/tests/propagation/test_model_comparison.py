@@ -1,19 +1,12 @@
 """Cross-model validation debugger tests"""
 import pytest
 import numpy as np
-from propagation_model.models import (
+from propagation_model import (
     free_space_path_loss as fspl_model,
     rain_attenuation as rain_model,
     gas_attenuation as gas_model,
     fog_attenuation as fog_model,
-    close_in_path_loss as ci_model
-)
-from propagation_model.empirical_models import (
-    free_space_path_loss as fspl_empirical,
-    rain_attenuation as rain_empirical,
-    gas_attenuation as gas_empirical,
-    fog_attenuation as fog_empirical,
-    close_in_path_loss as ci_empirical
+    close_in_path_loss as ci_model,
 )
 from propagation_model.itm_model import itm_path_loss as itm_model
 from propagation_model.ray_tracing_model import ray_tracing_path_loss as ray_tracing_model
@@ -28,69 +21,73 @@ from test_utils.validators import (
 )
 from test_utils.fixtures import SAMPLE_VALID_CONFIGS
 
+
+def _rain_closed_form(freq_ghz, dist_km, rate_mmh):
+    """Canonical horizontal-polarization coefficients used by the model."""
+    k = 0.0001 * freq_ghz ** 0.88
+    alpha = 0.90
+    return k * rate_mmh ** alpha * dist_km
+
+
+def _gas_closed_form(freq_ghz, dist_km, temp_c=15.0, pressure_hpa=1013.25, rh_pct=50.0):
+    """Closed form of the gas model under standard atmosphere."""
+    t_k = temp_c + 273.15
+    svp = 6.1121 * np.exp((17.502 * temp_c) / (temp_c + 240.97))
+    wvd = 216.7 * (rh_pct / 100.0 * svp) / t_k
+    return (
+        0.0001 * pressure_hpa * freq_ghz ** 2 / (freq_ghz ** 2 + 0.1)
+        + 0.000045 * wvd * freq_ghz ** 2 / (freq_ghz ** 2 + 0.5)
+    ) * dist_km
+
+
+def _fog_closed_form(freq_ghz, dist_km, density_gm3):
+    return 0.2 * density_gm3 * freq_ghz ** 2 / (freq_ghz ** 2 + 0.7) * dist_km
+
+
 class TestModelComparisonDebugger:
     """Test suite for cross-model validation and comparison"""
-    
+
     @pytest.mark.propagation
     def test_fspl_consistency(self):
-        """Test that FSPL models give consistent results"""
+        """FSPL must match its closed-form expression across bands"""
         test_cases = [
             (30.0, 0.1),      # VHF, short distance
             (300.0, 1.0),     # UHF, medium distance
             (3000.0, 10.0),   # Microwave, long distance
         ]
-        
+
         for frequency_mhz, distance_km in test_cases:
-            # Test basic consistency between implementations
-            result_model = fspl_model(frequency_mhz, distance_km)
-            result_empirical = fspl_empirical(frequency_mhz, distance_km)
-            
-            # Should be identical (same mathematical formula)
-            assert abs(result_model - result_empirical) < 0.01
-            
-            # Should pass validation
-            assert validate_fspl_output(result_model, frequency_mhz, distance_km)
-            assert validate_fspl_output(result_empirical, frequency_mhz, distance_km)
-    
+            result = fspl_model(frequency_mhz, distance_km)
+            expected = 32.44 + 20 * np.log10(distance_km) + 20 * np.log10(frequency_mhz)
+            assert abs(result - expected) < 1e-9
+            assert validate_fspl_output(result, frequency_mhz, distance_km)
+
     @pytest.mark.propagation
-    def test_empirical_model_consistency(self):
-        """Test that empirical models produce reasonable results"""
+    def test_empirical_models_match_closed_forms(self):
+        """Rain/gas/fog implementations must match their closed forms exactly"""
         test_cases = [
             # (frequency_ghz, distance_km, rain_rate_mmh)
             (5.0, 1.0, 5.0),    # Light rain
             (10.0, 5.0, 25.0),  # Moderate rain
             (30.0, 10.0, 50.0), # Heavy rain
         ]
-        
+
         for frequency_ghz, distance_km, rain_rate_mmh in test_cases:
-            # Test rain models
-            result_model = rain_model(frequency_ghz, distance_km, rain_rate_mmh)
-            result_empirical = rain_empirical(frequency_ghz, distance_km, rain_rate_mmh)
-            
-            # Both should be valid and non-negative
-            assert result_model >= 0
-            assert result_empirical >= 0
-            assert validate_rain_attenuation_output(result_model, frequency_ghz, distance_km, rain_rate_mmh)
-            assert validate_rain_attenuation_output(result_empirical, frequency_ghz, distance_km, rain_rate_mmh)
-            
-            # Test gas models (standard conditions)
-            result_model_gas = gas_model(frequency_ghz, distance_km)
-            result_empirical_gas = gas_empirical(frequency_ghz, distance_km)
-            
-            assert result_model_gas >= 0
-            assert result_empirical_gas >= 0
-            assert validate_gas_attenuation_output(result_model_gas, frequency_ghz, distance_km)
-            assert validate_gas_attenuation_output(result_empirical_gas, frequency_ghz, distance_km)
-            
-            # Test fog models
+            result_rain = rain_model(frequency_ghz, distance_km, rain_rate_mmh)
+            assert result_rain >= 0
+            assert validate_rain_attenuation_output(result_rain, frequency_ghz, distance_km, rain_rate_mmh)
+            assert abs(result_rain - _rain_closed_form(frequency_ghz, distance_km, rain_rate_mmh)) < 1e-9
+
+            result_gas = gas_model(frequency_ghz, distance_km)
+            assert result_gas >= 0
+            assert validate_gas_attenuation_output(result_gas, frequency_ghz, distance_km)
+            assert abs(result_gas - _gas_closed_form(frequency_ghz, distance_km)) < 1e-9
+
             fog_density = 0.5  # g/m³
-            result_model_fog = fog_model(frequency_ghz, distance_km, fog_density)
-            result_empirical_fog = fog_empirical(frequency_ghz, distance_km, fog_density)
-            
-            assert result_model_fog >= 0
-            assert result_empirical_fog >= 0
-            assert validate_fog_attenuation_output(result_model_fog, frequency_ghz, distance_km, fog_density)
-            assert validate_fog_attenuation_output(result_empirical_fog, frequency_ghz, distance_km, fog_density)
+            result_fog = fog_model(frequency_ghz, distance_km, fog_density)
+            assert result_fog >= 0
+            assert validate_fog_attenuation_output(result_fog, frequency_ghz, distance_km, fog_density)
+            assert abs(result_fog - _fog_closed_form(frequency_ghz, distance_km, fog_density)) < 1e-9
     
     @pytest.mark.propagation
     def test_model_order_of_magnitude(self):

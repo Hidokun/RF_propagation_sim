@@ -27,20 +27,24 @@ def rain_attenuation(
         gamma_R = k * R^alpha
         A = gamma_R * d
     """
-    if distance_km <= 0.0 or rain_rate_mmh <= 0.0:
+    if frequency_ghz <= 0.0 or distance_km <= 0.0 or rain_rate_mmh <= 0.0:
         return 0.0
 
-    polarization = polarization.lower()
-    if k is None or alpha is None:
+    # Defaults are filled per-coefficient so a caller-supplied k or alpha is
+    # never silently discarded (parity with the vector twin in
+    # coverage_engine._weather_matrix).
+    if k is None and alpha is None:
+        polarization = polarization.lower()
         if polarization.startswith("h"):
-            k = 0.0001 * frequency_ghz ** 0.88
-            alpha = 0.90
+            k, alpha = 0.0001 * frequency_ghz ** 0.88, 0.90
         elif polarization.startswith("v"):
-            k = 0.00012 * frequency_ghz ** 0.84
-            alpha = 0.91
+            k, alpha = 0.00012 * frequency_ghz ** 0.84, 0.91
         else:
-            k = 0.00011 * frequency_ghz ** 0.86
-            alpha = 0.90
+            k, alpha = 0.00011 * frequency_ghz ** 0.86, 0.90
+    elif k is None:
+        k = 0.0001 * frequency_ghz ** 0.88          # horizontal-polarization default
+    elif alpha is None:
+        alpha = 0.90
 
     gamma_r = k * rain_rate_mmh ** alpha
     return gamma_r * distance_km
@@ -55,7 +59,7 @@ def gas_attenuation(
     relative_humidity: float = 50.0,
 ) -> float:
     """Return atmospheric gas attenuation in dB using temperature, pressure, and humidity."""
-    if distance_km <= 0.0:
+    if frequency_ghz <= 0.0 or distance_km <= 0.0:
         return 0.0
 
     temperature_k = temperature_c + 273.15
@@ -71,7 +75,7 @@ def gas_attenuation(
 ### 4. Fog Propagation Model ###
 def fog_attenuation(frequency_ghz: float, distance_km: float, fog_density_gm3: float) -> float:
     """Return fog attenuation in dB using an ITU-R P.840-style approximation."""
-    if distance_km <= 0.0 or fog_density_gm3 <= 0.0:
+    if frequency_ghz <= 0.0 or distance_km <= 0.0 or fog_density_gm3 <= 0.0:
         return 0.0
 
     gamma_f = 0.2 * fog_density_gm3 * frequency_ghz ** 2 / (frequency_ghz ** 2 + 0.7)
@@ -85,10 +89,20 @@ def close_in_path_loss(
     reference_distance_m: float = 1.0,
     path_loss_exponent: float = 2.0,
 ) -> float:
-    """Return a close-in reference path loss estimate in dB."""
-    d_m = max(distance_km * 1e3, reference_distance_m)
-    fspl_ref = 32.44 + 20.0 * np.log10(frequency_mhz)
-    return fspl_ref + 10.0 * path_loss_exponent * np.log10(d_m / reference_distance_m)
+    """Return a close-in reference path loss estimate in dB.
+
+    Canonical form: PL(d) = 32.44 + 20lg(f_MHz) + 20lg(d0_km)
+                          + 10n*lg(d/d0), with d and d0 in meters.
+    The 20lg(d0_km) anchor is what makes CI(n=2) collapse exactly onto
+    FSPL for ANY reference distance.
+    """
+    if frequency_mhz <= 0.0 or distance_km <= 0.0:
+        return 0.0
+    d0_m = max(float(reference_distance_m), 1e-6)
+    d_m = max(distance_km * 1e3, d0_m)
+    fspl_ref = (32.44 + 20.0 * np.log10(frequency_mhz)
+                + 20.0 * np.log10(d0_m / 1000.0))
+    return fspl_ref + 10.0 * path_loss_exponent * np.log10(d_m / d0_m)
 
 
 ### 6. TIREM-style Propagation Model ###
@@ -100,10 +114,16 @@ def tirem_path_loss(
     ground_conductivity: float = 0.005,
     effective_earth_radius_factor: float = 4.0 / 3.0,
 ) -> float:
-    """Return a terrain-aware path loss estimate that mimics TIREM-style penalties."""
+    """Return a terrain-aware path loss estimate that mimics TIREM-style penalties.
+
+    Deprecated heuristic (audit L-1): kept for API compatibility, not used by
+    the coverage engines. Curvature credit is now NEGATIVE in the radius
+    factor — a larger effective Earth radius means LESS curvature loss.
+    """
     baseline = free_space_path_loss(frequency_mhz, distance_km)
     terrain_penalty = {"average": 5.0, "hilly": 12.0, "mountainous": 20.0}.get(terrain_type, 8.0)
     conductivity_penalty = 5.0 * np.log10(1.0 + ground_conductivity * 1e3)
     permittivity_penalty = 2.0 if surface_permittivity > 10.0 else 0.0
-    earth_curvature_penalty = 10.0 * np.log10(effective_earth_radius_factor)
-    return baseline + terrain_penalty + conductivity_penalty + permittivity_penalty + earth_curvature_penalty
+    # Larger k-factor => flatter effective Earth => less curvature penalty.
+    curvature_credit = -10.0 * np.log10(max(effective_earth_radius_factor, 1.0))
+    return baseline + terrain_penalty + conductivity_penalty + permittivity_penalty + curvature_credit

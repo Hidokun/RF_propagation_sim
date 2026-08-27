@@ -1,0 +1,10 @@
+{
+  "name": "demo_antenna",
+  "frequency_mhz": 900,
+  "tx_power_dbm": 40,
+  "height_m": 30,
+  "gain_dbi": 12,
+  "lat": 33.58831,
+  "lng": -7.61138,
+  "alt": 30
+}

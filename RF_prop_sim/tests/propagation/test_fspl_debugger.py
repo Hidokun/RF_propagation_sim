@@ -1,8 +1,7 @@
 """FSPL model debugger tests"""
 import pytest
 import numpy as np
-from propagation_model.models import free_space_path_loss as fspl_model
-from propagation_model.empirical_models import free_space_path_loss as fspl_empirical
+from propagation_model import free_space_path_loss as fspl_model
 from test_utils.validators import validate_fspl_output
 from test_utils.fixtures import SAMPLE_VALID_CONFIGS
 
@@ -14,17 +13,13 @@ class TestFSPLDebugger:
         """Test basic FSPL functionality with standard inputs"""
         frequency_mhz = 300.0
         distance_km = 5.0
-        
-        # Test both implementations
-        result_model = fspl_model(frequency_mhz, distance_km)
-        result_empirical = fspl_empirical(frequency_mhz, distance_km)
-        
-        # Validate outputs
-        assert validate_fspl_output(result_model, frequency_mhz, distance_km)
-        assert validate_fspl_output(result_empirical, frequency_mhz, distance_km)
-        
-        # Results should be identical (or very close)
-        assert abs(result_model - result_empirical) < 0.01
+
+        result = fspl_model(frequency_mhz, distance_km)
+
+        # Validate output against the closed-form reference
+        assert validate_fspl_output(result, frequency_mhz, distance_km)
+        expected = 32.44 + 20 * np.log10(distance_km) + 20 * np.log10(frequency_mhz)
+        assert abs(result - expected) < 1e-9
     
     @pytest.mark.propagation
     def test_fspl_zero_inputs(self):
@@ -78,24 +73,23 @@ class TestFSPLDebugger:
     
     @pytest.mark.propagation
     def test_fspl_against_empirical_model(self):
-        """Cross-validate FSPL implementation against empirical model"""
+        """Cross-validate FSPL implementation against the closed-form expression"""
         test_cases = [
             (30.0, 0.1),      # VHF, short distance
             (300.0, 1.0),     # UHF, medium distance
             (3000.0, 10.0),   # Microwave, long distance
             (30000.0, 100.0)  # mmWave, very long distance
         ]
-        
+
         for frequency_mhz, distance_km in test_cases:
-            result_model = fspl_model(frequency_mhz, distance_km)
-            result_empirical = fspl_empirical(frequency_mhz, distance_km)
-            
-            # Should be identical
-            assert abs(result_model - result_empirical) < 0.01
-            
+            result = fspl_model(frequency_mhz, distance_km)
+            expected = 32.44 + 20 * np.log10(distance_km) + 20 * np.log10(frequency_mhz)
+
+            # Must match the closed form exactly
+            assert abs(result - expected) < 1e-9
+
             # Should pass validation
-            assert validate_fspl_output(result_model, frequency_mhz, distance_km)
-            assert validate_fspl_output(result_empirical, frequency_mhz, distance_km)
+            assert validate_fspl_output(result, frequency_mhz, distance_km)
     
     @pytest.mark.propagation
     def test_fspl_extreme_values(self):
